@@ -1,0 +1,129 @@
+blueprint:
+  name: "Sensor Light with Lux, Night Mode & TV Control"
+  description: >
+    Automates a light based on motion, brightness, time, and TV state.
+    - Turns on light when motion is detected (between 17:30 - 23:00) and lux is below a set threshold.
+    - Turns off light at 23:00 and disables motion automation.
+    - Turns off light when TV turns off after 23:00.
+    - Re-enables motion-based lighting at 17:30.
+
+  domain: automation
+  input:
+    motion_sensor:
+      name: Motion Sensor
+      description: "Select the motion sensor"
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: motion
+
+    lux_sensor:
+      name: Lux Sensor (Optional)
+      description: "Select the lux sensor to check darkness (leave empty to ignore)"
+      default: none
+      selector:
+        entity:
+          domain: sensor
+
+    lux_threshold:
+      name: Lux Threshold
+      description: "Light will only turn on if brightness (lx) is below this value."
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: lx
+          mode: slider
+
+    light_target:
+      name: Light
+      description: "Select the light to control"
+      selector:
+        entity:
+          domain: light
+
+    tv_entity:
+      name: TV Entity
+      description: "Select the media player entity for the TV"
+      selector:
+        entity:
+          domain: media_player
+
+    night_mode:
+      name: Night Mode Toggle
+      description: "Select an input_boolean entity to disable automation after 23:00"
+      selector:
+        entity:
+          domain: input_boolean
+
+mode: restart
+
+trigger:
+  # Motion detected
+  - platform: state
+    entity_id: !input motion_sensor
+    to: "on"
+
+  # Time-based triggers
+  - platform: time
+    at: "23:00"
+  - platform: time
+    at: "17:30"
+
+  # TV turns off after 23:00
+  - platform: state
+    entity_id: !input tv_entity
+    to: "off"
+
+action:
+  - choose:
+      # 1️⃣ Turn on light when motion detected (between 17:30 - 23:00) AND lux is low
+      - conditions:
+          - condition: time
+            after: "17:30"
+            before: "23:00"
+          - condition: state
+            entity_id: !input night_mode
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: template
+                value_template: "{{ not (states['!input lux_sensor'] is defined) or (states['!input lux_sensor'].state | float(999) < !input lux_threshold) }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light_target
+
+      # 2️⃣ Turn off light at 23:00 and enable Night Mode
+      - conditions:
+          - condition: time
+            after: "22:59"
+            before: "23:01"
+        sequence:
+          - service: light.turn_off
+            target:
+              entity_id: !input light_target
+          - service: input_boolean.turn_on
+            entity_id: !input night_mode
+
+      # 3️⃣ Turn off light when TV turns off after 23:00
+      - conditions:
+          - condition: time
+            after: "23:00"
+          - condition: state
+            entity_id: !input light_target
+            state: "on"
+        sequence:
+          - service: light.turn_off
+            target:
+              entity_id: !input light_target
+
+  # 4️⃣ Re-enable motion-based lighting at 17:30
+  - if:
+      - condition: time
+        after: "17:29"
+        before: "17:31"
+    then:
+      - service: input_boolean.turn_off
+        entity_id: !input night_mode

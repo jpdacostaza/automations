@@ -1,29 +1,40 @@
 blueprint:
-  name: Motion-Controlled Light with Lux and Cutoff
+  name: Motion-Controlled Light with Optional Conditions
   description: >
-    Turns a light or switch on based on motion and lux levels, and off after no motion or at a cutoff time.
+    A smart light automation with motion, lux threshold, cutoff time, and auto-off — all optional.
   domain: automation
   input:
+    target_switch:
+      name: Switch or Light Entity
+      selector:
+        entity:
+          domain: input_boolean
+
     motion_sensor:
       name: Motion Sensor
       selector:
         entity:
           domain: binary_sensor
           device_class: motion
+    use_motion:
+      name: Enable Motion Trigger
+      default: true
+      selector:
+        boolean:
+
     illuminance_sensor:
       name: Illuminance Sensor
       selector:
         entity:
           domain: sensor
           device_class: illuminance
-    target_switch:
-      name: Switch or Light Entity
+    use_lux:
+      name: Use Lux Threshold
+      default: true
       selector:
-        entity:
-          domain: input_boolean
+        boolean:
     lux_threshold:
       name: Lux Threshold
-      description: Only turn on when lux is below this
       default: 30
       selector:
         number:
@@ -31,8 +42,14 @@ blueprint:
           max: 1000
           step: 1
           unit_of_measurement: lx
+
+    use_off_delay:
+      name: Enable Auto-Off After No Motion
+      default: true
+      selector:
+        boolean:
     off_delay:
-      name: Time to wait before turning off after no motion (minutes)
+      name: No Motion Off Delay (Minutes)
       default: 5
       selector:
         number:
@@ -40,9 +57,14 @@ blueprint:
           max: 60
           step: 1
           unit_of_measurement: minutes
+
+    use_cutoff:
+      name: Enable Cutoff Time
+      default: true
+      selector:
+        boolean:
     cutoff_time:
       name: Cutoff Time
-      description: Time to force turn off the light every night
       default: "23:00:00"
       selector:
         time:
@@ -55,6 +77,7 @@ trigger:
     entity_id: !input motion_sensor
     from: "off"
     to: "on"
+    enabled: !input use_motion
 
   - platform: state
     entity_id: !input motion_sensor
@@ -62,24 +85,22 @@ trigger:
     to: "off"
     for:
       minutes: !input off_delay
+    enabled: !input use_off_delay
 
   - platform: time
     at: !input cutoff_time
+    enabled: !input use_cutoff
 
 condition: []
 
 action:
   - choose:
-      # Motion + dark + before cutoff + switch is off
+      # Motion detected → check lux and cutoff before turning ON
       - conditions:
-          - condition: state
-            entity_id: !input motion_sensor
-            state: "on"
-          - condition: numeric_state
-            entity_id: !input illuminance_sensor
-            below: !input lux_threshold
-          - condition: time
-            before: !input cutoff_time
+          - condition: template
+            value_template: "{{ not (use_lux and states(illuminance_sensor) | float > lux_threshold | float) }}"
+          - condition: template
+            value_template: "{{ not (use_cutoff and now().strftime('%H:%M:%S') > cutoff_time) }}"
           - condition: state
             entity_id: !input target_switch
             state: "off"
@@ -88,23 +109,22 @@ action:
             target:
               entity_id: !input target_switch
 
-      # No motion + switch is on
+      # No motion + auto-off enabled + light is on
       - conditions:
-          - condition: state
-            entity_id: !input motion_sensor
-            state: "off"
           - condition: state
             entity_id: !input target_switch
             state: "on"
+          - condition: template
+            value_template: "{{ use_off_delay }}"
         sequence:
           - service: input_boolean.turn_off
             target:
               entity_id: !input target_switch
 
-      # After cutoff time + switch is on
+      # Cutoff time hit + cutoff enabled + light is on
       - conditions:
-          - condition: time
-            after: !input cutoff_time
+          - condition: template
+            value_template: "{{ use_cutoff }}"
           - condition: state
             entity_id: !input target_switch
             state: "on"

@@ -1,0 +1,114 @@
+blueprint:
+  name: Motion-Controlled Light with Lux and Cutoff
+  description: >
+    Turns a light or switch on based on motion and lux levels, and off after no motion or at a cutoff time.
+  domain: automation
+  input:
+    motion_sensor:
+      name: Motion Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: motion
+    illuminance_sensor:
+      name: Illuminance Sensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: illuminance
+    target_switch:
+      name: Switch or Light Entity
+      selector:
+        entity:
+          domain: input_boolean
+    lux_threshold:
+      name: Lux Threshold
+      description: Only turn on when lux is below this
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: 1
+          unit_of_measurement: lx
+    off_delay:
+      name: Time to wait before turning off after no motion (minutes)
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: minutes
+    cutoff_time:
+      name: Cutoff Time
+      description: Time to force turn off the light every night
+      default: "23:00:00"
+      selector:
+        time:
+
+mode: queued
+max: 5
+
+trigger:
+  - platform: state
+    entity_id: !input motion_sensor
+    from: "off"
+    to: "on"
+
+  - platform: state
+    entity_id: !input motion_sensor
+    from: "on"
+    to: "off"
+    for:
+      minutes: !input off_delay
+
+  - platform: time
+    at: !input cutoff_time
+
+condition: []
+
+action:
+  - choose:
+      # Motion + dark + before cutoff + switch is off
+      - conditions:
+          - condition: state
+            entity_id: !input motion_sensor
+            state: "on"
+          - condition: numeric_state
+            entity_id: !input illuminance_sensor
+            below: !input lux_threshold
+          - condition: time
+            before: !input cutoff_time
+          - condition: state
+            entity_id: !input target_switch
+            state: "off"
+        sequence:
+          - service: input_boolean.turn_on
+            target:
+              entity_id: !input target_switch
+
+      # No motion + switch is on
+      - conditions:
+          - condition: state
+            entity_id: !input motion_sensor
+            state: "off"
+          - condition: state
+            entity_id: !input target_switch
+            state: "on"
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: !input target_switch
+
+      # After cutoff time + switch is on
+      - conditions:
+          - condition: time
+            after: !input cutoff_time
+          - condition: state
+            entity_id: !input target_switch
+            state: "on"
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: !input target_switch
